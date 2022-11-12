@@ -1,0 +1,15 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+    commands:
+      - sam build
+      - aws cloudformation package --template-file template.yaml --s3-bucket assignment2.b3-code-repo --output-template-file outputTemplate.yaml
+
+artifacts:
+  enable-symlinks: yes
+  files:
+  - template.yaml
+  - outputTemplate.yaml
