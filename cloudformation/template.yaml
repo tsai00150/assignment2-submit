@@ -153,6 +153,23 @@ Resources:
     Metadata:
       'AWS::CloudFormation::Designer':
         id: 337971ba-d019-4af0-b44b-ed275703d252
+
+  LF2:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Sub '${CodeBucketName}'
+        S3Key: lf2.zip
+      Environment:
+        Variables:
+          opensearchEndpoint: !Sub '${Opensearch.DomainEndpoint}'
+      FunctionName: cf-search-photos
+      Handler: lambda_function.lambda_handler
+      PackageType: Zip
+      Role: arn:aws:iam::764420359320:role/lf1-role-assigment-2
+      Runtime: python3.7
+      Timeout: 30
+    
   APIGATEWAY:
     Type: 'AWS::ApiGateway::RestApi'
     Properties:
@@ -200,7 +217,7 @@ Resources:
               x-amazon-apigateway-integration:
                 httpMethod: POST
                 uri: >-
-                  arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:764420359320:function:search-photos/invocations
+                  arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:764420359320:function:cf-search-photos/invocations
                 responses:
                   default:
                     statusCode: '200'
@@ -374,3 +391,12 @@ Resources:
                     statusCode: '200'
                     responseParameters:
                       method.response.header.Access-Control-Allow-Methods: '''OPTIONS,PUT'''
+
+  LF2Permission:
+    DependsOn: APIGATEWAY
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LF2.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:us-east-1:764420359320:${APIGATEWAY.RootResourceId}/*/GET/search'
