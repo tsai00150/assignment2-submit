@@ -1,0 +1,376 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Template for assignment 2
+Parameters:
+  B1BucketName:
+    Type: String
+    Default: cf-b1-frontend-11
+  B2Bucketname:
+    Type: String
+    Default: cf-b2-photo-album-11
+  APIGatewayName:
+    Type: String
+    Default: cf-apigateway
+  KmsKeyForOpensearch:
+    Type: String
+    Default: e53e804a-58b9-473d-8961-822c26e5cf0c
+  CodeBucketName:
+    Type: String
+    Default: assignment2.b3-code-repo
+  IAMArn:
+    Type: String
+    Default: 'arn:aws:iam::764420359320:role/assign2'
+Resources:
+  Opensearch:
+    Type: 'AWS::OpenSearchService::Domain'
+    Properties:
+      AdvancedSecurityOptions:
+        Enabled: true
+        MasterUserOptions:
+          MasterUserARN: !Sub '${IAMArn}'
+      ClusterConfig:
+        DedicatedMasterEnabled: true
+        DedicatedMasterType: t3.small.search
+        InstanceType: t3.small.search
+      DomainEndpointOptions:
+        EnforceHTTPS: true
+      DomainName: cf-opensearch
+      EncryptionAtRestOptions:
+        Enabled: true
+        KmsKeyId: !Sub '${KmsKeyForOpensearch}'
+      EBSOptions:
+        EBSEnabled: true
+        Iops: 3000
+        VolumeSize: 10
+        VolumeType: gp3
+      NodeToNodeEncryptionOptions:
+        Enabled: true
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 6f27d614-d96b-433f-a81e-35daee5142ab
+  LF1:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Sub '${CodeBucketName}'
+        S3Key: lf1.zip
+      Environment:
+        Variables:
+          opensearchEndpoint: !Sub '${Opensearch.DomainEndpoint}'
+      FunctionName: cf-index-photos
+      Handler: lambda_function.lambda_handler
+      PackageType: Zip
+      Role: !Sub '${IAMArn}'
+      Runtime: python3.7
+      Timeout: 30
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 82d79027-2a9a-4a23-8b7f-4315ff485952
+  LF1Permission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName:
+        'Fn::GetAtt':
+          - LF1
+          - Arn
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Sub 'arn:aws:s3:::${B2Bucketname}'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 0367d903-c706-4448-baad-2c6a986f149b
+  B2:
+    DependsOn: LF1Permission
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      AccessControl: PublicRead
+      BucketName: !Sub '${B2Bucketname}'
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+              - PUT
+            AllowedOrigins:
+              - '*'
+            ExposedHeaders:
+              - Access-Control-Allow-Origin
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:Put'
+            Function: !Sub '${LF1.Arn}'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 152ec1d4-7433-4249-baba-31d8ad739299
+  B2BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: ExamplePolicy02
+        Statement:
+          - Sid: !Sub '${B2Bucketname}-policy'
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:aws:s3:::${B2Bucketname}'
+              - !Sub 'arn:aws:s3:::${B2Bucketname}/*'
+      Bucket: !Ref B2
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 3a9444ff-6f23-477c-ad33-444d2d88907b
+  B1:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Ref B1BucketName
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: f2ed643b-a039-4020-85f8-7e6301af8b63
+  B1BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      PolicyDocument:
+        Id: MyPolicy
+        Version: 2012-10-17
+        Statement:
+          - Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Join 
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref B1
+                - /*
+      Bucket: !Ref B1
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 337971ba-d019-4af0-b44b-ed275703d252
+  APIGATEWAY:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Body:
+        swagger: '2.0'
+        info:
+          description: >-
+            AI Photo Search application, built during the Cloud and Big Data
+            course at Columbia University.
+          version: 1.0.0
+          title: AI Photo Search
+        host: l0k98lmm4l.execute-api.us-east-1.amazonaws.com
+        basePath: /v1
+        schemes:
+          - https
+        paths:
+          /search:
+            get:
+              operationId: searchPhotos
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              parameters:
+                - name: q
+                  in: query
+                  required: false
+                  type: string
+              responses:
+                '200':
+                  description: 200 response
+                  schema:
+                    $ref: '#/definitions/SearchResponse'
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: string
+                '403':
+                  description: 403 response
+                  schema:
+                    $ref: '#/definitions/Error'
+                '500':
+                  description: 500 response
+                  schema:
+                    $ref: '#/definitions/Error'
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                uri: >-
+                  arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:764420359320:function:search-photos/invocations
+                responses:
+                  default:
+                    statusCode: '200'
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: '''*'''
+                requestParameters:
+                  integration.request.path.q: method.request.querystring.q
+                requestTemplates:
+                  application/json: |-
+                    {
+                        "q" : "$input.params('q')"
+                    }
+                passthroughBehavior: when_no_templates
+                contentHandling: CONVERT_TO_TEXT
+                type: aws
+            options:
+              consumes:
+                - application/json
+              responses:
+                '200':
+                  description: 200 response
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: '200'
+                requestTemplates:
+                  application/json: '{"statusCode": 200}'
+                passthroughBehavior: when_no_match
+                type: mock
+          /upload:
+            put:
+              operationId: uploadPhoto
+              produces:
+                - application/json
+              responses:
+                '200':
+                  description: 200 response
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: string
+                '403':
+                  description: 403 response
+                  schema:
+                    $ref: '#/definitions/Error'
+                '500':
+                  description: 500 response
+                  schema:
+                    $ref: '#/definitions/Error'
+              x-amazon-apigateway-integration:
+                credentials: !Sub '${IAMArn}'
+                httpMethod: PUT
+                uri: !Sub 'arn:aws:apigateway:us-east-1:s3:path/${B1BucketName}'
+                responses:
+                  default:
+                    statusCode: '200'
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: '''*'''
+                passthroughBehavior: when_no_templates
+                contentHandling: CONVERT_TO_BINARY
+                type: aws
+            options:
+              consumes:
+                - application/json
+              responses:
+                '200':
+                  description: 200 response
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: string
+                    Access-Control-Allow-Methods:
+                      type: string
+                    Access-Control-Allow-Headers:
+                      type: string
+                    x-amz-meta-customLabels:
+                      type: string
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: '200'
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: '''OPTIONS,PUT'''
+                      method.response.header.Access-Control-Allow-Headers: >-
+                        'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,x-amz-meta-customLabels'
+                      method.response.header.Access-Control-Allow-Origin: '''*'''
+                requestTemplates:
+                  application/json: '{"statusCode": 200}'
+                passthroughBehavior: when_no_match
+                type: mock
+          '/upload/{folder}/{object}':
+            put:
+              consumes:
+                - image/jpeg
+                - image/png
+                - image/jpg
+              parameters:
+                - name: Content-Type
+                  in: header
+                  required: false
+                  type: string
+                - name: Accept
+                  in: header
+                  required: false
+                  type: string
+                - name: x-amz-meta-customLabels
+                  in: header
+                  required: false
+                  type: string
+                - name: object
+                  in: path
+                  required: true
+                  type: string
+                - name: folder
+                  in: path
+                  required: true
+                  type: string
+              responses:
+                '200':
+                  description: 200 response
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: string
+              security:
+              - api_key: []
+              x-amazon-apigateway-integration:
+                credentials: !Sub '${IAMArn}'
+                httpMethod: PUT
+                uri: 'arn:aws:apigateway:us-east-1:s3:path/{bucket}/{key}'
+                responses:
+                  default:
+                    statusCode: '200'
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Origin: '''*'''
+                requestParameters:
+                  integration.request.header.Accept: method.request.header.Accept
+                  integration.request.header.x-amz-meta-customLabels: method.request.header.x-amz-meta-customLabels
+                  integration.request.path.key: method.request.path.object
+                  integration.request.path.bucket: method.request.path.folder
+                  integration.request.header.Content-Type: method.request.header.Content-Type
+                passthroughBehavior: when_no_templates
+                contentHandling: CONVERT_TO_BINARY
+                type: aws
+            options:
+              consumes:
+                - application/json
+              parameters:
+                - name: folder
+                  in: path
+                  required: true
+                  type: string
+                - name: object
+                  in: path
+                  required: true
+                  type: string
+              responses:
+                '200':
+                  description: 200 response
+                  headers:
+                    metadata:
+                      type: string
+                    Access-Control-Allow-Origin:
+                      type: string
+                    Access-Control-Allow-Methods:
+                      type: string
+                    Access-Control-Allow-Headers:
+                      type: string
+                    x-amz-meta-customLabels:
+                      type: string
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: '200'
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: '''OPTIONS,PUT'''
